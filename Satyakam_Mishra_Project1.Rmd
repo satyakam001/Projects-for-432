@@ -1,0 +1,598 @@
+---
+title: "Bilirubin concentrations and Ascities levels in Primary Biliary Cirrhosis."
+author: "Satyakam Mishra"
+date: "`r Sys.time()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: yes
+    code_folding: show
+---
+
+## Preliminaries
+
+```{r setup, echo=FALSE, cache=FALSE}
+library(knitr); library(rmdformats)
+
+## Global options
+opts_chunk$set(cache=FALSE,
+               prompt=FALSE,
+               tidy=FALSE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+```{r load packages here}
+
+library(skimr)
+library(rms)
+library(simputation)
+library(broom)
+library(modelr)
+library(arm)
+library(pander)
+library(ROCR)
+library(pROC)
+library(forcats)
+library(car)
+library(tidyverse)
+```
+
+
+# Task 1: Data Source
+
+This dataset was found in appendix D of Fleming and Harrington, Counting Processes and Survival Analysis, Wiley, 1991. I have taken it from http://lib.stat.cmu.edu/datasets/
+The dataset contains the data from the Mayo Clinic trial in primary biliary cirrhosis (PBC) of the liver conducted between 1974 and 1984.  
+
+A total of 424 PBC patients, referred to Mayo Clinic during that ten-year
+interval, met eligibility criteria for the randomized placebo controlled
+trial of the drug D-penicillamine.  The first 312 cases in the data set
+participated in the randomized trial and contain largely complete data.  The
+additional 112 cases did not participate in the clinical trial, but consented
+to have basic measurements recorded and to be followed for survival.  Six of
+those cases were lost to follow-up shortly after diagnosis, so the data here
+are on an additional 106 cases as well as the 312 randomized participants.
+Missing data items are denoted by `.'. Thus, since many of the values were missing for last 112 people, I chose the first 312 values for the project.
+A more extended discussion can be found in Dickson, et al., Hepatology 10:1-7 (1989) and in Markus, et al., N Eng J of Med 320:1709-13 (1989).
+
+
+
+# Task 2: Load and Tidy the Data
+
+```{r load your data here}
+
+pbc <- read.csv("C:\\Users\\mani\\Desktop\\Case Acad\\Spring 2018\\tidypbc1.csv", header=T, na.strings=c(".","NA"))
+na.strings=c("",". ","NA") %>% tbl_df()
+
+pbc <- pbc %>% rename(alk_phos = alk.phos)
+
+map_df(pbc, function(x) sum(is.na(x)))
+
+## As we can see, Cholesterol has 28 missing values, Copper has 2, platelets has 4, and triglycerides has 30.
+
+set.seed(40009)
+pbc1 <- pbc %>% select(chol, copper, drug, fu.days, ID, plat, sex, stage, status, triglyc, alb, alk_phos, Bili, protime, sgot, edema, spiders, hepatem, ascities)  %>% impute_rhd(chol  ~ 1) %>% impute_rhd(copper  ~ 1) %>% impute_rhd(plat  ~ 1) %>% impute_rhd(triglyc ~ 1)
+
+pbc2 <- pbc1
+pbc2 <- pbc2 %>% mutate(status = as.factor(ifelse(status < 2, "Censored", "Death")))
+pbc2 <- pbc2 %>% rename(female = sex)
+pbc2 <- pbc2 %>%  mutate(drug = ifelse(drug == 1, "D-penicillamine", "Placebo"))
+
+pbc2 <- pbc2 %>% mutate(stage = as.factor(ifelse(stage == 1, "Early", ifelse(stage == 2, "Mid", ifelse(stage == 3, "Advanced", "Extreme")))))
+pbc2 <- pbc2 %>% mutate(edema = as.factor(ifelse(edema < 0.5, "No Edema", "Edema")))
+
+```
+
+1. Step 1:
+Converted all the "." to NA values in order for skim to work.
+2. Step 2:
+Checked for the missing values, if any. Found that Cholesterol has 28 missing values, Copper has 2, platelets has 4, and triglycerides has 30.
+3. Step 3:
+Performed simple imputation to add the missing values in the numeric variables. The reason I performed simple imputation was that the number of missing values isn't very large in the variables.
+4. Step 4:
+Converted Status to a binary variable.
+Renamed Sex as Female
+Converted Drug into a character variable.
+Converted Stage into a factor variable with multiple levels.
+Converted edema into a factor variable with two levels.
+
+
+# Task 3: Listing of My Tibble
+
+```{r listing of your tibble}
+
+
+pbc2 %>% tbl_df()
+
+
+```
+
+The tibble has 312 observations(rows) in 19 columns, that is, 19 variables. 
+
+
+# Task 4: Code Book
+
+
+
+Variable   | Type        | Details
+---------: | ----------: | ----------------------------------------
+`ID`  | Integer   | ID(case number) of the people
+`fu.days`| Integer | number of days between registration and the earlier of                         death,transplantion, or study analysis time in July, 1986
+`female`  | Integer | Here, 1 means female, and 0 male
+`stage`   | factor | The stage of PBC (has 4 levels)
+`status` | factor| Only two levels- Censored or Death
+`drug`    | Character | Two categories: D-penicillamine or Placebo
+`alb`   | numeric | values in gm/dl, ranging from 1.96 to 4.64 gm/dl
+`plat` | numeric | values in cubic ml/1000, ranging from 62 to 563 cubic                          ml.
+`chol`  | numeric | Values in mg/dl, ranging from 120 to 1775 mg/dl
+`Copper` | numeric | Values in ug/day, ranging from 4 to 588 ug/day
+`triglyc` | numeric | In mg/dl, ranging from 33 to 598 mg/dl 
+`alk_phos` | numeric| In U/l.Ranges from 289 to 13862 U/l.
+`Bili`  | numeric   | In mg/dl. Ranges from 0.3 to 28 mg/dl 
+`protime`  | numeric   | In seconds. Ranges from 9 to 17.2 seconds
+`sgot`  | numeric   | In U/ml. Ranges from 26.35 to 457.25 U/ml
+`edema`  | factor   | Presence or absence of edema
+`hepatem`  |  integer  | Presence of hepatomegaly. Binary variable
+`ascities`  | integer   | Presence of ascities. Binary variable
+`spiders`  | integer   | Presence of spider angiomas. Binary variable.
+ 
+# Task 5: My Subjects
+
+This dataset is about the PBC(primary biliary cirrhosis) trial conducted in 312 patients from 1974-1984. One of the purposes of the study was to make survival models for patients with PBC, using Serum Bilirubin and albumin concentrations and prothrombin time. Further information is provided in the paper:
+Dickson, E. R., Grambsch, P. M., Fleming, T. R., Fisher, L. D. and Langworthy, A. (1989), Prognosis in primary biliary cirrhosis: Model for decision making. Hepatology, 10: 1-7. doi:10.1002/hep.1840100102
+
+
+# Task 6: My Variables
+
+
+There are 19 variables (or columns) in the dataset:
+
+1. ID: Specifes the case number of the patients. A total of 312 patients in this study.
+2. fu.days: Number of days between registration and the earlier of death, transplantion, or study analysis time in July, 1986 
+3. female: Gender of the patients involved in the study. 
+4. stage: The stage at which the disease was at. It is a multicategorical variable with 4 different levels.
+5. status: Status of the patients when the trial ended. Either dead or censored
+6. drug: The drug patients were given. They were either given D-penicillamine, or placebo.
+7. alb: The concentration of albumin present in the serum. Given in gm/dl.
+8. plat: The concentration of platelets in the patients. It is given in cubic ml/1000 
+9. chol: The concentration of cholesterol in the patients. It is given in mg/dl.
+10. copper: The concentration of copper removed through urine. It is given in ug/day.
+11. triglyc: The concentration of triglycerides in the patients. Given in mg/dl.
+12. alk_phos: The concentration of alkaline phosphatase, given in U/l
+13. sgot: Serum glutamic oxaloacetic transaminase, an enzyme secreted by the liver. It's concentration is provided in U/ml
+14. protime: It is the time taken by prothrombin to form. It is provided in seconds.
+15. Bili: Bilirubin concentrations in the serum. Given in mg/dl
+16. ascities: It denotes the presence or absence of ascities, which is abnormal accumulation of fluids
+17. hepatem: Hepatomegaly , is the abnormal enlargement of liver, and is given as whether present or absent.
+18. spiders: spider angiomas, is a disease caused in the liver. It is a binary variable here.
+19. edema: Also refers to accumulation of abnormal quantity of fluids, but in different areas. It is converted into a binary factor here.
+
+# Task 7: My Planned Linear Regression Model
+
+Higher bilirubin levels are associated with occruance of PBC. I plan to see concentrations of other variables and how they affect the Bilirubin levels. 
+Thus, I plan on having the variable "bilirubin" as the outcome variable.
+My predicting variables shall be:
+1. Copper 
+2. SGOT
+3. Triglyc
+4. Protime
+5. Albumin
+6. Hepatem
+
+```{r spearman rho square plot}
+spear.Bili <- spearman2(Bili ~ alk_phos + protime + triglyc + chol + female + copper + sgot + plat + ascities + hepatem + edema + spiders, data = pbc2)
+
+plot(spear.Bili)
+```
+Here, Copper and SGOT are the two most important variables according to the spearman Rho square plot
+
+# Task 8: My Planned Logistic Regression Model
+
+I plan on having "Ascities" as the binary outcome variable.
+My other predictors shall be:
+1. hepatem
+2. Protime 
+3. Female
+4. Status
+5. Alkaline Phosphatase.
+
+```{r spearman rho square plot2}
+spear.ascities <- spearman2(ascities ~ alk_phos + protime + triglyc + chol + female + copper + sgot + plat + stage + status + Bili + drug + spiders + edema + hepatem, data = pbc2)
+
+plot(spear.ascities)
+
+```
+
+Hepatem is supposed to be the most important variable here, according to the Spearman Rho square plot. The multi-categorical variable is the stage variable.
+Predictions using stage variable can be made fr ascities.
+
+# Task 9: Affirmation
+
+The dataset fulfills all the necessary requirements of the project. It has more than 100 observations in 19 variables.
+
+I am certain that it is completely appropriate for this data to be shared with anyone, without any conditions. There are no concerns about privacy or security.
+
+
+
+# Task 10: Linear Regression
+
+
+## Exploratory Analysis
+
+```{r skim}
+skim(pbc2)
+```
+
+I then checked whether this was a normal distribution or not.
+
+```{r Checking for normality}
+
+ggplot(pbc2, aes(x=Bili)) +
+geom_histogram(aes(y = ..density..), binwidth=1, fill = "papayawhip", color = "seagreen") +    stat_function(fun = dnorm, 
+args = list(mean = mean(pbc2$Bili),                                                    sd = sd(pbc2$Bili)),
+  lwd = 1.5, col = "blue") +
+geom_text(aes(label = paste("Mean", round(mean(pbc2$Bili),1),
+                                  ", SD", round(sd(pbc2$Bili),1))),
+                x = 13, y = 0.1, color="blue", fontface = "italic") + 
+    labs(title = "Bilirubin values with Normal Distribution Superimposed", 
+           x = "Bilirubin concentrations (mg/dl)", y = "Probability Density Function")
+
+# Checking the QQ plot
+
+qqnorm(pbc2$Bili, main="Bilirubin conc.", col="coral")
+qqline(pbc2$Bili)
+```
+
+As we can see, the histogram and the QQ plot show that the distribution is not normal. Thus, I made a box cox plot to check for the Y1 value.
+
+### Transformation
+
+```{r checking how much transformation is required}
+boxCox(lm(Bili ~ copper + female + sgot + alk_phos + stage + drug + hepatem + protime + plat + triglyc + alb, data=pbc2))
+
+powerTransform(lm(Bili ~ copper + female + sgot + alk_phos + stage + drug + hepatem + protime + plat + triglyc + alb, data=pbc2))
+```
+
+The Y1 value was found to be -0.2, which is closest to 0. Therefore, I converted the Bilirubin values into its natural logarithm.
+
+```{r transformation}
+pbc4 <- pbc2
+pbc4 <- pbc4 %>% mutate(Bili = log(Bili))
+ggplot(pbc4, aes(x=Bili)) +
+geom_histogram(aes(y = ..density..), binwidth=1, 
+                     fill = "papayawhip", color = "seagreen") +
+      stat_function(fun = dnorm, 
+                    args = list(mean = mean(pbc4$Bili), 
+                                sd = sd(pbc4$Bili)),
+                    lwd = 1.5, col = "blue") +
+      geom_text(aes(label = paste("Mean", round(mean(pbc4$Bili),1),
+                                  ", SD", round(sd(pbc4$Bili),1))),
+                x = 13, y = 0.1, color="blue", fontface = "italic") + 
+     labs(title = "Bilirubin values with Normal Distribution Superimposed", 
+           x = "Bilirubin concentrations (mg/dl)", y = "Probability Density Function")
+
+# Now, I checked whether transformation had an effect on the Q-Q plot or not.
+
+
+qqnorm(pbc4$Bili, main="Bilirubin conc.", col="coral")
+qqline(pbc4$Bili)
+```
+
+Hence, I proceeded with the transformed values to make my model.
+
+## First Model: Kitchen Sink
+
+I first made a Kitchen Sink Model
+
+```{r kitchen sink1}
+# Kitchen sink
+model_ks <- lm(Bili~copper + female + sgot + alk_phos + stage + drug + hepatem + protime + plat + triglyc + alb, data = pbc4)
+```
+
+I then decided to reduce the number of variables, since the degrees of freedom used in the kitchen sink model would be high.
+
+```{r Selecting variables}
+
+# Stepwise Forward Regression 
+with(pbc4, 
+     step(lm(Bili ~ 1), 
+           scope=(~ copper + female + sgot + alk_phos + stage + drug + hepatem + protime + plat + triglyc + alb), direction="forward"))
+```
+
+The variables obtained from forward regression were:
+sgot, copper, Protime, triglyc, alb, hepatem, plat. 
+
+I then made a model using these variables:
+
+```{r Lm model}
+model_fw2 <- lm(Bili~ sgot + copper + protime + triglyc + alb + hepatem + plat, data = pbc4)
+summary(model_fw2)
+```
+
+The R square value was found to be 0.56, and sgot, copper, protime, triglyc were seen to significantly affect the Bilirubin concetrations.
+
+I then compared the Forward regression model with the Kitchen Sink Model
+
+## Comparisons
+
+```{r compare}
+anova(model_ks, model_fw2)
+glance(model_ks)
+glance(model_fw2)
+```
+Here, the R squared value for the Kitchen Sink model is higher than the Forward regression model, but the kitchen sink model uses more degrees of freedom.
+
+For Kitchen sink
+
+```{r distribution of errors}
+set.seed(43201)
+
+cv_model_ks <- pbc4 %>%
+crossv_kfold(k = 10) %>%
+mutate(model = map(train,  ~ lm(Bili ~ sgot + copper + protime + alk_phos + female + triglyc + alb + hepatem + plat + triglyc + alb, data= .)))
+
+cv_model_pred2 <- cv_model_ks %>%
+unnest(map2(model, test, ~ augment(.x, newdata = .y)))
+ cv_model_results2 <- cv_model_pred2 %>% dplyr::summarize( 
+           RMSE_ks = sqrt(mean((Bili - .fitted) ^2)),
+            MAE_ks = mean(abs(Bili - .fitted))) %>% round(., 3)
+head(cv_model_pred2, 3)
+cv_model_results2
+
+# The RMS and MAE values for the kitchen sink model are 0.705 and 0.555 respectively
+
+cv_model_pred2 %>%
+mutate(errors = Bili - .fitted) %>%
+ggplot(., aes(x = errors)) +
+geom_histogram(bins = 30, fill = "darkviolet", col = "yellow") + labs(title = "Cross-Validated Errors Predicting Bilirubin", subtitle = "Kitchen Sink, pbc4",
+x = "Error in predicting Bilirubin")
+
+
+# FOr the Forward regression model
+
+set.seed(543210)
+
+cv_model_fw <- pbc4 %>%
+crossv_kfold(k = 10) %>%
+mutate(model = map(train, 
+ ~ lm(Bili ~ sgot + copper + protime + triglyc + alb + hepatem + plat, data= .)))
+
+cv_model_pred <- cv_model_fw %>%
+unnest(map2(model, test, ~ augment(.x, newdata = .y)))
+
+cv_model_results <- cv_model_pred %>% dplyr::summarize( 
+           RMSE = sqrt(mean((Bili - .fitted) ^2)),
+           MAE = mean(abs(Bili - .fitted))) %>% round(., 3)
+head(cv_model_pred, 3)
+
+cv_model_results
+
+# The RMSE and MAE values for Forward regression model are 0.700 and 0.551 
+
+cv_model_pred %>%
+mutate(errors = Bili - .fitted) %>%
+ggplot(., aes(x = errors)) +
+geom_histogram(bins = 30, fill = "darkviolet", col = "yellow") + labs(title = "Cross-Validated Errors Predicting Bilirubin", subtitle = "Stepwise regression (forward), pbc2",
+x = "Error in predicting Bilirubin")
+```
+
+The RMSE and MAE values for the kitchen sink model are only slightly higher than the forward regression model, and the distribution of errors is quite similar. Thus, it was on the basis of degrees of freedom that I chose the forward regression model.
+
+## Validation
+
+```{r ols}
+model_fw2ols <- ols(Bili~ sgot + copper + protime + triglyc + alb + hepatem + plat, data = pbc4, x = TRUE, y = TRUE)
+
+validate(model_fw2ols)
+plot(anova(model_fw2ols))
+```
+According to the anova here, sgot has the highest predictive power amongst all variables, followed by copper and triglyc. 
+
+## Improving the model
+
+```{r calibration1}
+par(mfrow = c(1,2)); plot(model_fw2, which = c(1, 5))
+```
+
+There were some issues with the outlier values, with some observations going above 2 Residuals, and thus, I decided to remove them in order to see whether there was any increase in the R square value or not, though all of them fell within the Cook's distance. 
+The observations removed were: 144, 67, 18 and 16. 
+
+```{r deletion}
+model_fw2del2 <- lm(Bili~ sgot + copper + protime + triglyc + alb + hepatem + plat, data = pbc4[-16,])
+summary(model_fw2del2)
+
+# There was a slight increase in R squared value
+
+model_fw2del3 <- lm(Bili~ sgot + copper + protime + triglyc + alb + hepatem + plat, data = pbc4[-c(144,67,18,16),])
+summary(model_fw2del3)
+
+# The R squared value was thus increased by removing the outlier values, 
+
+par(mfrow = c(1,2)); plot(model_fw2del3, which = c(1, 5))
+par(mfrow = c(1,2)); plot(model_fw2del3, which = c(2, 3))
+
+
+summary(model_fw2del3)
+exp(coef(model_fw2del3))
+exp(confint(model_fw2del3))
+```
+
+## Predictions
+
+```{r prediction}
+p <- datadist(pbc4)
+options(datadist = "p")
+model_fw2del3ols <- ols(Bili~ sgot + copper + protime + triglyc + alb + hepatem + plat, data = pbc4[-c(144,67,18,16),], x = TRUE, y = TRUE)
+
+predictions <- Predict(model_fw2del3ols, hepatem = c(0,1), sgot = seq(25, 100) )
+tbl_df(predictions)
+ggplot(Predict(model_fw2del3ols, sgot = 25:100, hepatem = c(0,1)))
+```
+
+
+```{r nomogram}
+plot(nomogram(model_fw2del3ols))
+```
+
+Here, sgot has the highest impact on the prediction of Bilirubin concentrations, followed by triglyc and copper.
+
+## Final Model
+
+```{r final}
+model_fw2del3ols
+summary(model_fw2del3ols)
+exp(confint(model_fw2del3ols))
+exp(coef(model_fw2del3ols))
+```
+
+The final model obtained is:
+log(Bilirubin) = -1.65 + 0.0073(sgot) + 0.0036(copper) + 0.16(protime) + 0.003(triglyc) - 0.294(alb) + 0.27(hepatem) - 0.007(plat)
+The adjusted R squared value is 0.585, implying that 58.5 % of the variance is explained by this transformed model.
+
+For every 1 increase in the log Bili value,
+The sgot, copper, protime, triglyc and hepatem values are going to increase, while albumin and plat values are supposed to go down.
+Those who have had hepatem had a significant increase in the transformed Bili concentrations of about 1.319. The 95% CI was (1.08, 1.60)
+As the the log Bili concentrations go up by 1mg/dl, the triglyc, plat, sgot and copper values are increased by almost 1 mg/dl, 1 cubic ml/1000, 1 U/ml and 1 ug/day respectively, (The 95% C.I. of (1.002, 1.004), (0.99, 1.00), (1.005, 1.008) and (1.002, 1.004) respectively)
+For a unit increase in log Bili, the albumin concentrations go down, and there is a slight increase in the protime (by 1.17 seconds). (95% CI of (0.61, 0.9) and (1.08,1.27) respectively). 
+
+# Task 11 Logistic Regression
+
+## Spearman Rho Squared
+```{r spearman rho squared plot again}
+spear.ascities <- spearman2(ascities ~ alk_phos + protime + triglyc + chol + female + copper + sgot + plat + stage + status + Bili + drug + spiders + edema + hepatem, data = pbc2)
+
+plot(spear.ascities)
+
+```
+
+On the basis of the spearman Rho squared plot, I decided to go ahead with the first 5 variables, since I had a small number of observations and limited degrees of freedom to spend.
+I then made a kitchen sink model using these 5 predictors.
+
+## Kitchen Sink Model
+
+```{r kitchen sink}
+logmodel_ks_lrm <- lrm(ascities~ hepatem + protime + female + status + alk_phos, data = pbc2, x = T, y = T)
+anova(logmodel_ks_lrm)
+plot(anova(logmodel_ks_lrm))
+ggplot(Predict(logmodel_ks_lrm, alk_phos = 500:540, hepatem = c(0,1), female =c(0,1), fun=plogis)) +
+  theme_bw() +
+  labs(x = "",
+  y = "Pr(Ascities)", title = "Model 1 Predictions", subtitle = "Across levels of status, protime, alk_phos, hepatem and female, holding all other predictors at their medians")
+
+# Making a glm model for the same variables
+
+logmodel_ks_glm <- glm(ascities~ hepatem + protime + female + status + alk_phos, family = binomial, data = pbc2)
+summary(logmodel_ks_glm)
+anova(logmodel_ks_glm)
+
+```
+  
+The Kitchen sink model shows that while female, hepatem and alk_phos significantly affect the prediction ability for ascities, status and protime do not appear to do so.
+I thus did a stepwise backward regression to see if the number of variables could be brought down.
+         
+## Stepwise backward regression
+
+```{r stepwise}
+step(logmodel_ks_glm)
+```
+
+The stepwise regression gave the following variables for this model:
+ascities ~hepatem + protime + female + alk_phos
+
+```{r newmodel}
+logmodel_ks_lrm2 <- lrm(ascities ~hepatem + protime + female + alk_phos, data = pbc2, x = T, y = T)
+
+# Mkaing a glm model of the same
+
+logmodel_ks_glm2 <- glm(ascities ~ hepatem + protime + female + alk_phos, family = binomial, data = pbc2)
+```
+
+## Comparisons
+
+### Anova Comparison
+
+```{r Anova}
+anova(logmodel_ks_glm, logmodel_ks_glm2)
+```
+On the basis of anova, I would say that model 1 is slghtly better, but uses more degrees of freedom.
+
+### AIC/BIC Comparison
+
+```{r AIC}
+glance(logmodel_ks_glm)
+glance(logmodel_ks_glm2)
+```
+The AIC and BIC values have clearly gone down for model 2. 
+
+### ROC Comparison
+
+```{r ROC}
+roc_model_ks_glm <- roc(pbc2$ascities ~ predict(logmodel_ks_glm, type = "response"), ci = TRUE)
+roc_model_ks_glm
+plot(roc_model_ks_glm)
+
+
+roc_model_ks_glm2 <- roc(pbc2$ascities ~ predict(logmodel_ks_glm2, type = "response"), ci = TRUE)
+roc_model_ks_glm2
+plot(roc_model_ks_glm2)
+```
+
+The ROC values are not very different, and model 2 has slightly higher ROC value 
+(0.8161 and 0.8153 for model 2 and model 1 respectively).
+
+### Calibration
+
+```{r calibration}
+plot(calibrate(logmodel_ks_lrm))
+plot(calibrate(logmodel_ks_lrm2))
+```
+
+The calibration plot for both the models isn't great.The bias corrected line is both above and below the ideal line, and there are problems in predictions if the predicted values go up. Both the graphs, however, are similar. 
+
+### Validation
+
+```{r validation}
+validate(logmodel_ks_lrm)
+validate(logmodel_ks_lrm2)
+```
+The C-statistic for MOdel 1 is: 0.5 + (0.6307/2) = 0.81535
+The C-statistic for model 2 is: 0.5 + (0.6322/2) = 0.8161
+
+Hence, based on all these factors, and the fact that model 2 is easier and spends lesser degrees of freedom, I have decided to go forward with model 2.
+
+## Plots
+
+```{r plots}
+plot(summary(logmodel_ks_lrm2))
+plot(nomogram(logmodel_ks_lrm2))
+ggplot(Predict(logmodel_ks_lrm2))
+```
+
+Here, we can see that female has a major impact on the odds ratio, and alk_phos is quite the important predictor, as shown by the nomogram, followed by female and protime.
+
+## Odds Ratio and Confidence Interval
+```{r odds}
+logmodel_ks_lrm2
+summary(logmodel_ks_lrm2)
+exp(coef(logmodel_ks_glm2))
+exp(confint(logmodel_ks_glm2))
+```
+The final equation for the model is:
+Log odds of Ascities happening = 2.32 - 1.7(hepatem) - 0.24(protime) + 2.24(female) - 0.0003(alk_phos)
+
+The odds ratio indicate that:
+Females had more odds (9.42 times) of having ascities as compared to males.The 95% CI was (4.099, 23.39)
+If a person had hepatem (hepatem=1), they had lesser odds of developing ascities (0.16 times). The 95% CI was (0.08, 0.33)
+If a person's body took more time for prothrombin formation, they had lesser odds of developing ascities. The 95% CI was (0.58, 1.04)
+Female, hepatem and alk_phos were all statistically significant in determining whether a person had ascities or not.
+
+# Task 12 
+
+For me, the best subsets didn't work, and my R crashed a couple of times. Thus, I decided to do away with using best subsets, and focussed on stepwise regression.
+I thought making linear model would be easier, but it was slightly more difficult due to the transformation.
+I wish I had all the ways of calibration and validation at the back of my head, since I had to look up in the slides every time for this. I also wish I had known how to improve a pre-existing model, since I devoted a lot of time for that. I had to re-read the analysis for models, since I had forgotten how to provide the model summary.
+Holding onto everything together was really confusing, as I did a lot of analysis, and in-between forgot a lot of stuff which I had planned. Assembling everything together was also confusing.
+I believe the most useful things I learnt from this project were to calibrate and validate the models and to reduce the number of variables and improve a pre-existing model. 
+
